@@ -42,6 +42,8 @@ io.on('connection', (socket) => {
     const Message = require('./models/Message');
     const Chat = require('./models/Chat');
 
+    const User = require('./models/User');
+
     // For authenticated users, use userId as chat identifier
     // For anonymous users, use the generated chatId
     const chatIdentifier = userId || chatId;
@@ -61,7 +63,22 @@ io.on('connection', (socket) => {
       }
     }
 
-    const message = new Message({ chatId: chat._id, userId, sender, content });
+    // Resolve username for easier identification in admin console
+    let username;
+    try {
+      if (userId) {
+        const user = await User.findById(userId).select('username');
+        username = user ? user.username : undefined;
+      } else if (data.username) {
+        username = data.username;
+      } else {
+        username = 'Anonymous';
+      }
+    } catch (err) {
+      username = data.username || 'Anonymous';
+    }
+
+    const message = new Message({ chatId: chat._id, userId, username, sender, content });
     await message.save();
 
     // Update chat timestamp
@@ -127,7 +144,25 @@ app.get('/api/chats', auth, async (req, res) => {
       query.userId = req.user._id;
     }
 
-    const chats = await Chat.find(query).populate('userId', 'username email').sort({ updatedAt: -1 });
+    // Chat.userId is stored as Mixed (ObjectId or string). Populate user info
+    let chats = await Chat.find(query).sort({ updatedAt: -1 }).lean();
+    const mongoose = require('mongoose');
+    chats = await Promise.all(chats.map(async (chat) => {
+      const uid = chat.userId;
+      // If userId is a string and looks like an ObjectId, fetch user
+      if (uid && typeof uid === 'string' && mongoose.Types.ObjectId.isValid(uid)) {
+        const user = await User.findById(uid).select('username email').lean();
+        if (user) chat.userId = user;
+      } else if (uid && typeof uid === 'object' && uid._id && mongoose.Types.ObjectId.isValid(uid._id)) {
+        // If it's an object without username, try to populate
+        if (!uid.username) {
+          const user = await User.findById(uid._id).select('username email').lean();
+          if (user) chat.userId = user;
+        }
+      }
+      return chat;
+    }));
+
     res.json(chats);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -162,7 +197,8 @@ app.post('/api/chats/:id/messages', auth, adminAuth, async (req, res) => {
   const { content } = req.body;
   const Message = require('./models/Message');
   try {
-    const message = new Message({ chatId: req.params.id, userId: req.user._id, sender: 'admin', content });
+    // Save admin message including admin username for clarity
+    const message = new Message({ chatId: req.params.id, userId: req.user._id, username: req.user.username, sender: 'admin', content });
     await message.save();
 
     // Update chat timestamp
@@ -182,14 +218,25 @@ app.post('/api/chats/:id/messages', auth, adminAuth, async (req, res) => {
 app.get('/api/chats/:id', auth, async (req, res) => {
   const Chat = require('./models/Chat');
   try {
-    const chat = await Chat.findById(req.params.id).populate('userId', 'username email');
+    let chat = await Chat.findById(req.params.id).lean();
     if (!chat) {
       return res.status(404).json({ error: 'Chat not found' });
     }
-    // Check if user is admin or the chat owner
-    if (req.user.role !== 'admin' && chat.userId._id.toString() !== req.user._id.toString()) {
+
+    // Determine chat owner id for permission check
+    const chatOwnerId = (typeof chat.userId === 'object' && chat.userId && chat.userId._id) ? chat.userId._id : chat.userId;
+    if (req.user.role !== 'admin' && chatOwnerId.toString() !== req.user._id.toString()) {
       return res.status(403).json({ error: 'Access denied' });
     }
+
+    // Populate userId if it's a user id string
+    const mongoose = require('mongoose');
+    const User = require('./models/User');
+    if (chat.userId && typeof chat.userId === 'string' && mongoose.Types.ObjectId.isValid(chat.userId)) {
+      const user = await User.findById(chat.userId).select('username email').lean();
+      if (user) chat.userId = user;
+    }
+
     res.json(chat);
   } catch (error) {
     res.status(500).json({ error: error.message });

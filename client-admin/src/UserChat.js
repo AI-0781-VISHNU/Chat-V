@@ -126,6 +126,7 @@ function UserChat({ user, token, onLogout }) {
         sender: 'user',
         content: messageContent,
         userId: user._id,
+        username: user.username,
         timestamp: new Date()
       };
       setMessages(prevMessages => [...prevMessages, optimisticMessage]);
@@ -155,12 +156,15 @@ function UserChat({ user, token, onLogout }) {
         <div className="chat-window">
           <div className="messages">
             {messages.map((msg, index) => (
-              <div key={msg._id || index} className={`message ${msg.sender}`}>
-                <div className="message-content">{msg.content}</div>
-                <div className="message-time">
-                  {new Date(msg.timestamp).toLocaleTimeString()}
-                </div>
-              </div>
+                    <div key={msg._id || index} className={`message ${msg.sender}`}>
+                      <div className="message-meta">
+                        <strong className="message-username">{msg.username || (msg.userId === user._id ? user.username : 'Anonymous')}</strong>
+                      </div>
+                      <div className="message-content">{msg.content}</div>
+                      <div className="message-time">
+                        {new Date(msg.timestamp).toLocaleTimeString()}
+                      </div>
+                    </div>
             ))}
             <div ref={messagesEndRef} />
           </div>

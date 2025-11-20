@@ -42,10 +42,13 @@ const ChatWidget = ({ serverUrl = 'http://localhost:3001' }) => {
   const sendMessage = (e) => {
     e.preventDefault();
     if (inputMessage.trim() && chatId) {
+      const trimmed = inputMessage.trim();
       const messageData = {
         chatId,
         sender: 'user',
-        content: inputMessage.trim()
+        content: trimmed,
+        // Widget doesn't have authenticated user info; provide a lightweight label
+        username: 'Visitor'
       };
       socketRef.current.emit('sendMessage', messageData);
       setInputMessage('');
@@ -72,6 +75,9 @@ const ChatWidget = ({ serverUrl = 'http://localhost:3001' }) => {
           <div className="chat-messages">
             {messages.map((msg, index) => (
               <div key={index} className={`message ${msg.sender}`}>
+                <div className="message-meta">
+                  <strong className="message-username">{msg.username || 'Visitor'}</strong>
+                </div>
                 <span className="message-content">{msg.content}</span>
                 <span className="message-time">
                   {new Date(msg.timestamp).toLocaleTimeString()}

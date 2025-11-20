@@ -23,11 +23,50 @@ function AdminDashboard() {
         headers: { Authorization: `Bearer ${token}` }
       });
       const data = await response.json();
-      setChats(Array.isArray(data) ? data : []);
+      const rawChats = Array.isArray(data) ? data : [];
+
+      // For any chats where `userId` wasn't populated (string id), fetch chat details
+      const chatsWithUser = await Promise.all(rawChats.map(async (chat) => {
+        // If userId is missing, a plain string, or an object without username, fetch details
+        const needsPopulate = !chat.userId || typeof chat.userId === 'string' || (typeof chat.userId === 'object' && !chat.userId.username);
+        if (needsPopulate) {
+          try {
+            const resp = await fetch(`${API_BASE_URL}/api/chats/${chat._id}`, {
+              headers: { Authorization: `Bearer ${token}` }
+            });
+            if (resp.ok) {
+              const populated = await resp.json();
+              return populated;
+            }
+          } catch (err) {
+            console.warn('Failed to fetch chat details for population', chat._id, err);
+          }
+        }
+        return chat;
+      }));
+
+      setChats(chatsWithUser);
     } catch (error) {
       console.error('Error fetching chats:', error);
     }
   }, [token]);
+
+  // Resolve a display name for a chat: prefer populated userId.username,
+  // then any username found in messages for that chat, then fall back to id or 'User'.
+  const resolveChatDisplayName = (chat) => {
+    if (!chat) return 'User';
+    // no-op
+    if (chat.userId && typeof chat.userId === 'object' && chat.userId.username) return chat.userId.username;
+    if (chat.userId && typeof chat.userId === 'string') return chat.userId;
+    // If selected chat and we have messages, try to find username from messages state
+    if (selectedChat && selectedChat._id === chat._id) {
+      const userMsg = messages.find(m => m.sender === 'user' && m.username);
+      if (userMsg) return userMsg.username;
+      const anyMsg = messages.find(m => m.username);
+      if (anyMsg) return anyMsg.username;
+    }
+    return 'User';
+  };
 
   useEffect(() => {
     if (token && user?.role === 'admin') {
@@ -100,6 +139,7 @@ function AdminDashboard() {
       sender: 'admin',
       content: messageContent,
       userId: user._id,
+      username: user.username,
       timestamp: new Date()
     };
     setMessages(prevMessages => [...prevMessages, optimisticMessage]);
@@ -164,7 +204,7 @@ function AdminDashboard() {
                 >
                   <div className="chat-info">
                     <span className="user-id">
-                      {chat.userId?.username ? `${chat.userId.username} (${chat.userId._id || chat.userId})` : `User: ${chat.userId}`}
+                      {resolveChatDisplayName(chat)}{(chat.userId && typeof chat.userId === 'object' && chat.userId._id) ? ` (${chat.userId._id})` : ''}
                     </span>
                     <span className="chat-status">{chat.status}</span>
                   </div>
@@ -179,17 +219,20 @@ function AdminDashboard() {
             {selectedChat ? (
               <>
                 <div className="chat-header">
-                  <h3>Chat with {selectedChat.userId?.username || selectedChat.userId || 'User'}</h3>
+                  <h3>Chat with {resolveChatDisplayName(selectedChat)}</h3>
                 </div>
                 <div className="messages">
-            {messages.map((msg, index) => (
-              <div key={msg._id || index} className={`message ${msg.sender}`}>
-                <div className="message-content">{msg.content}</div>
-                <div className="message-time">
-                  {new Date(msg.timestamp).toLocaleTimeString()}
-                </div>
-              </div>
-            ))}
+                {messages.map((msg, index) => (
+                  <div key={msg._id || index} className={`message ${msg.sender}`}>
+                    <div className="message-meta">
+                      <strong className="message-username">{msg.username || (msg.userId && msg.userId.username) || (msg.userId === user._id ? user.username : 'User')}</strong>
+                    </div>
+                    <div className="message-content">{msg.content}</div>
+                    <div className="message-time">
+                      {new Date(msg.timestamp).toLocaleTimeString()}
+                    </div>
+                  </div>
+                ))}
                 </div>
                 <form onSubmit={sendMessage} className="message-form">
                   <input
